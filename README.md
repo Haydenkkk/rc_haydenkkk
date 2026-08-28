@@ -55,56 +55,16 @@
 ## 三、 整体架构与核心设计
 
 ### 1. 架构图
-```text
-   [ 上游业务系统 ] (Order / Pay / User)
-         │
-         │ 1. POST /api/v1/tasks (携带 target_url, header, body, idempotency_key)
-         ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│  Ingestion API Layer (FastAPI)                                         │
-│  • Pydantic 请求校验                                                   │
-│  • Idempotency-Key 幂等查重                                            │
-│  • 任务持久化落盘                                                      │
-│  • 极速返回 202 Accepted { "task_id": "...", "status": "PENDING" }     │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │ 2. 事务写入 (SQLite WAL / PostgreSQL)
-                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│  Durable Storage & Orphan Sweeper (定时扫描 >300s 处于 PROCESSING 的孤儿任务)  │
-│  • tasks: id, status, retry_count, max_retries, next_retry_at, logs    │
-│  • delivery_logs: attempt_number, status_code, duration_ms, error      │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │ 3. 原子批量抢占 (UPDATE ... RETURNING)
-                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│  Dispatcher & Delivery Engine (Async Worker / httpx)                   │
-│  • 并发控制 (asyncio.Semaphore)                                        │
-│  • 严格超时 (Connect: 3s, Read: 10s)                                   │
-│  • 优雅关机 (等待在途任务排空)                                         │
-│  • 状态码决策引擎:                                                     │
-│      ├─ 2xx  ──► 标记 DELIVERED (终态成功)                             │
-│      ├─ 4xx  ──► 标记 DEAD (客户端参数/认证错误，不可重试)             │
-│      └─ 5xx / 429 / Timeout ──► Exponential Backoff + Full Jitter      │
-│                                 (重试耗尽则流转至 DEAD / DLQ)          │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │ 4. 实际 HTTP 投递
-                                    ▼
-   [ 外部供应商 API ] (第三方广告 / CRM / 库存系统)
-```
+
+<p align="center">
+  <img src="docs/assets/architecture-diagram.svg" alt="System Architecture Diagram" width="100%" />
+</p>
 
 ### 2. 核心状态机设计
-```
-                  ┌────────────────────────────────┐
-                  │                                │
-                  ▼                                │ (人工 POST /tasks/{id}/retry)
-[创建] ──► PENDING ──► PROCESSING ──► DELIVERED (终态成功)
-               ▲             │
-               │             ├─────► RETRYING ─────┐
-               │             │         ▲           │ (重试耗尽 / 4xx 不可重试)
-               │             │         │ (Orphan   │
-               │             │         │ Sweeper)  ▼
-               └─────────────┴─────────┴───────► DEAD (死信池)
-```
+
+<p align="center">
+  <img src="docs/assets/state-machine-diagram.svg" alt="Task State Machine Diagram" width="100%" />
+</p>
 
 ---
 
@@ -123,6 +83,10 @@
 系统采用 Full Jitter 算法：
 $$\text{CappedInterval} = \min(\text{MaxInterval}, \text{InitialBackoff} \times \text{Multiplier}^{\text{retry\_count}})$$
 $$\text{WaitTime} = \text{random.uniform}(0.1, \text{CappedInterval})$$
+
+<p align="center">
+  <img src="docs/assets/backoff-jitter-chart.svg" alt="Exponential Backoff vs Full Jitter" width="100%" />
+</p>
 
 - 默认参数：`InitialBackoff = 1.0s`, `Multiplier = 2.0`, `MaxInterval = 60.0s`, `MaxRetries = 5`。
 - 随机抖动将并发重试请求在时间轴上均匀打散，给外部系统留出自愈窗口。
