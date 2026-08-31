@@ -59,7 +59,7 @@
 - **原因**：如果第三方由于 Token 过期或 URL 错误返回 401/404，持续重试只会白白浪费 CPU 和带宽资源，甚至被对方安全防火墙拉黑。及时归入死信池并保留错误上下文，便于运维排错。
 
 ### 2. 引入 Full Jitter（全抖动算法）消除重试雪崩
-- **决策内容**：重试间隔不使用确定性的 $2^n$，而是使用 $\text{WaitTime} = \text{random.uniform}(0.1, \min(\text{MaxBackoff}, \text{Base} \times 2^n))$。
+- **决策内容**：重试间隔不使用确定性的 $2^n$，而是使用 Full Jitter 算法：`WaitTime = random.uniform(0.1, min(MaxBackoff, Base * (2 ** retry_count)))`。
 - **原因**：在真实网络中，若外部服务发生短时间宕机，大量并发请求会在相同时间点失败。若采用固定退避，所有失败请求将在下一个相同的时间点同时发起重试，造成巨大的“重试风暴 (Thundering Herd)”，直接击垮正在重启恢复中的外部服务。引入随机 Jitter 能将重试流量平滑打散。
 
 ### 3. 采用 Atomic Claiming（原子状态抢占）避免并发重复投递

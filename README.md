@@ -10,7 +10,7 @@
 - [三、 整体架构与核心设计](#三-整体架构与核心设计)
 - [四、 可靠性保障与失败处理策略](#四-可靠性保障与失败处理策略)
 - [五、 中间件选型与工程取舍说明](#五-中间件选型与工程取舍说明)
-- [六、 系统演进路线 (V1 $\rightarrow$ V2 $\rightarrow$ V3)](#六-系统演进路线-v1--v2--v3)
+- [六、 系统演进路线 (V1 → V2 → V3)](#六-系统演进路线-v1--v2--v3)
 - [七、 快速上手与运行验证](#七-快速上手与运行验证)
 - [八、 API 接口规范](#八-api-接口规范)
 
@@ -81,8 +81,21 @@
 ### 3. 指数退避与全抖动算法 (Exponential Backoff with Full Jitter)
 当外部系统过载或网络抖动时，固定时间重试容易引发**重试风暴 (Thundering Herd)**，导致已过载的外部系统直接崩溃。
 系统采用 Full Jitter 算法：
-$$\text{CappedInterval} = \min(\text{MaxInterval}, \text{InitialBackoff} \times \text{Multiplier}^{\text{retry\_count}})$$
-$$\text{WaitTime} = \text{random.uniform}(0.1, \text{CappedInterval})$$
+
+```math
+\text{CappedInterval} = \min(\text{MaxInterval}, \text{InitialBackoff} \times \text{Multiplier}^{\text{retry\_count}})
+```
+```math
+\text{WaitTime} = \text{random.uniform}(0.1, \text{CappedInterval})
+```
+
+```python
+# 代码核心实现 (app/services/delivery.py)
+multiplier = settings.BACKOFF_MULTIPLIER ** retry_count
+raw_interval = settings.INITIAL_BACKOFF_SECONDS * multiplier
+capped_interval = min(settings.MAX_BACKOFF_SECONDS, raw_interval)
+wait_time = random.uniform(0.1, capped_interval)
+```
 
 <p align="center">
   <img src="docs/assets/backoff-jitter-chart.svg" alt="Exponential Backoff vs Full Jitter" width="100%" />
@@ -125,7 +138,7 @@ $$\text{WaitTime} = \text{random.uniform}(0.1, \text{CappedInterval})$$
 
 ---
 
-## 六、 系统演进路线 (V1 $\rightarrow$ V2 $\rightarrow$ V3)
+## 六、 系统演进路线 (V1 → V2 → V3)
 
 如果本系统在未来面临百万级日吞吐或更高复杂度的增长，建议按以下三阶段演进：
 
